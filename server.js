@@ -284,40 +284,128 @@ app.get('/api/classes/:classId', async (req, res) => {
 //---
 
 // Ruta para obtener las reservas de un usuario
+
 app.get('/api/reservations/:userId', async (req, res) => {
     const { userId } = req.params;
     try {
-        const reservations = await Reservation.find({ userId }).populate('classId');
+        let reservations = await Reservation.find({ userId }).populate('classId');
+        // Actualizar estado a 'expired' si corresponde (no asistió y ya pasó el horario)
+        const now = new Date();
+        const toUpdate = [];
+        for (const r of reservations) {
+            try {
+                if (r.status === 'active' && r.classId && r.classId.schedule) {
+                    const baseDate = r.classDate || now;
+                    const [eh,em] = (r.classId.schedule.endTime || r.classId.schedule.startTime || '00:00').split(':').map(Number);
+                    const endDT = new Date(baseDate);
+                    endDT.setHours(eh||0, em||0, 0, 0);
+                    if (endDT < now) {
+                        r.status = 'expired';
+                        
+                        await r.save();
+                        // liberar el cupo si quedó como ocupado
+                        const gymClass = await GymClass.findById(r.classId._id);
+                        if (gymClass && (gymClass.currentCapacity||0) > 0) {
+                            gymClass.currentCapacity -= 1;
+                            await gymClass.save();
+                        }
+                    }
+                }
+            } catch(e){}
+        }
+        // Por defecto devolvemos próximas (activas y futuras) y canceladas/expiradas también si el cliente las muestra
         res.status(200).json(reservations);
     } catch (error) {
         res.status(500).json({ message: 'Error al obtener las reservas', error });
     }
 });
+    
+;
 
 // Ruta para crear una nueva reserva
+
 app.post('/api/reservations', async (req, res) => {
-    const { userId, classId } = req.body;
+    let { userId, classId, gymClassId } = req.body;
     try {
+        // Aceptar tanto classId como gymClassId desde el cliente
+        classId = classId || gymClassId;
+        if (!userId || !classId) {
+            return res.status(400).json({ message: 'userId y classId son requeridos.' });
+        }
         const gymClass = await GymClass.findById(classId);
         if (!gymClass) {
             return res.status(404).json({ message: 'Clase no encontrada.' });
         }
 
+        // Validación de cupo
         if (gymClass.currentCapacity >= gymClass.maxCapacity) {
             return res.status(400).json({ message: 'No hay cupo disponible para esta clase.' });
         }
 
-        const newReservation = new Reservation({ userId, classId });
+        // Calcular la próxima fecha (classDate) para el día de la clase
+        const daysMap = { 'Lunes':1,'Martes':2,'Miércoles':3,'Miercoles':3,'Jueves':4,'Viernes':5,'Sábado':6,'Sabado':6,'Domingo':0 };
+        const today = new Date();
+        const targetDow = daysMap[gymClass.schedule.day] ?? null;
+        let classDate = null;
+        if (targetDow !== null) {
+            const tmp = new Date(today);
+            // set to next occurrence (including today if same dow and start time later)
+
+            const todayDow = tmp.getDay(); // 0 Sunday..6 Saturday
+            // map Monday=1..Sunday=0 as per above; convert to JS dow for comparison
+            // We already mapped Domingo to 0
+            let delta = (targetDow - todayDow);
+            if (delta < 0) delta += 7;
+            classDate = new Date(tmp.getFullYear(), tmp.getMonth(), tmp.getDate() + delta);
+        }
+        // Combinar classDate con horario de inicio y fin
+        function parseTimeToDate(baseDate, timeStr) {
+            const [h,m] = (timeStr || '00:00').split(':').map(Number);
+            const d = new Date(baseDate);
+            d.setHours(h||0, m||0, 0, 0);
+            return d;
+        }
+        const startDateTime = parseTimeToDate(classDate || today, gymClass.schedule.startTime);
+        const endDateTime = parseTimeToDate(classDate || today, gymClass.schedule.endTime || gymClass.schedule.startTime);
+
+        // Validación: no permitir reservar en el pasado
+        if (endDateTime < new Date()) {
+            return res.status(400).json({ message: 'La clase ya ocurrió. No es posible reservar.' });
+        }
+
+        // Validación: evitar doble reserva del mismo turno
+        const existingSame = await Reservation.findOne({ userId, classId, status: { $in: ['active'] } });
+        if (existingSame) {
+            return res.status(400).json({ message: 'Ya tienes una reserva activa para esta clase.' });
+        }
+
+        // Validación: evitar solapamiento con otras reservas activas
+        const userActive = await Reservation.find({ userId, status: 'active' }).populate('classId');
+        const overlaps = userActive.some(r => {
+            const c = r.classId;
+            if (!c) return false;
+            // Check same day of week
+            if (c.schedule?.day !== gymClass.schedule?.day) return false;
+            const rStart = parseTimeToDate(startDateTime, c.schedule.startTime);
+            const rEnd = parseTimeToDate(startDateTime, c.schedule.endTime || c.schedule.startTime);
+            return (startDateTime < rEnd && endDateTime > rStart);
+        });
+        if (overlaps) {
+            return res.status(400).json({ message: 'Tienes otra reserva que se superpone en el mismo horario.' });
+        }
+
+        const newReservation = new Reservation({ userId, classId, classDate: startDateTime });
         await newReservation.save();
 
-        gymClass.currentCapacity += 1;
+        gymClass.currentCapacity = (gymClass.currentCapacity || 0) + 1;
         await gymClass.save();
 
         res.status(201).json(newReservation);
     } catch (error) {
         res.status(500).json({ message: 'Error al crear la reserva', error });
     }
-});
+});     
+
 
 // Ruta para cancelar una reserva
 app.post('/api/reservations/cancel/:reservationId', async (req, res) => {
