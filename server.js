@@ -113,21 +113,29 @@ app.post('/api/auth/send-otp', async (req, res) => {
 
 // Confirmar OTP
 app.post('/api/auth/confirm-otp', async (req, res) => {
-    const { email, otp } = req.body;
-    try {
-        const user = await User.findOne({ email, otp, otpExpires: { $gt: new Date() } });
-        if (user) {
-            user.isVerified = true;
-            user.otp = null;
-            user.otpExpires = null;
-            await user.save();
-            res.status(200).json({ 
-                message: 'Usuario verificado exitosamente', 
-                user: {
-                    id: user._id // Make sure you're returning the user ID
-                }
-            });
-        } else {
+    const { email, otp } = req.body;
+    try {
+        const user = await User.findOne({ email, otp, otpExpires: { $gt: new Date() } });
+        if (user) {
+            user.isVerified = true;
+            user.otp = null;
+            user.otpExpires = null;
+            await user.save();
+            
+            // CORRECCIÓN: Devolvemos el objeto de usuario completo para que el cliente lo pueda deserializar.
+            res.status(200).json({ 
+                message: 'Usuario verificado exitosamente', 
+                user: {
+                    id: user._id,
+                    name: user.name || null, // Asegúrate de incluir campos nulos
+                    email: user.email,
+                    lastName: user.lastName || null,
+                    memberId: user.memberId || null,
+                    birthDate: user.birthDate || null,
+                    profilePhotoUrl: user.photo || null
+                }
+            });
+        } else {
             res.status(400).json({ message: 'Código OTP o correo electrónico incorrecto, o ha expirado' });
         }
     } catch (error) {
