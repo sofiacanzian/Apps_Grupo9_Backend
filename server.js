@@ -315,55 +315,50 @@ app.post('/api/auth/verify-otp-and-login', async (req, res) => {
     const otp = req.body.otp ? req.body.otp.trim() : null;
 
     try {
+        // 1. Buscar usuario con OTP válido y no expirado
         const user = await User.findOne({ email, otp, otpExpires: { $gt: new Date() } });
+        
         if (user) {
+            // 2. Actualizar campos de verificación y OTP
             user.isVerified = true;
             user.otp = null;
-  
-          user.otpExpires = null;
+            user.otpExpires = null;
             await user.save();
             
-            // ✅ CRÍTICO: Añadir el rol al payload del JWT
+            // 3. Generar Token JWT con el rol
             const token = jwt.sign(
                 { userId: user._id, email: user.email, role: user.role }, 
-   
-             JWT_SECRET, 
+                JWT_SECRET, 
                 { expiresIn: '1h' } 
             );
             
             const userObject = user.toObject();
 
-            // ✅ CRÍTICO: Devolver el token a nivel raíz para Kotlin
-     
-       res.status(200).json({ 
-                message: 'Verificación exitosa.Sesión iniciada.', 
+            // 4. Enviar respuesta de éxito y TERMINAR con 'return'
+            return res.status(200).json({ 
+                message: 'Verificación exitosa. Sesión iniciada.', 
                 token: token, 
                 user: {
                     id: userObject._id,
-                    name: userObject.name ||
-null, 
+                    name: userObject.name || null, 
                     email: userObject.email,
-                    lastName: userObject.lastName ||
-null,
-                    memberId: userObject.memberId ||
-null,
-                    birthDate: userObject.birthDate ||
-null,
-                    phoneNumber: userObject.phoneNumber ||
-null,
-                    address: userObject.address ||
-null,
-                    profilePhotoUrl: userObject.photo ||
-null,
+                    lastName: userObject.lastName || null,
+                    memberId: userObject.memberId || null,
+                    birthDate: userObject.birthDate || null,
+                    phoneNumber: userObject.phoneNumber || null,
+                    address: userObject.address || null,
+                    profilePhotoUrl: userObject.photo || null,
                     role: userObject.role // Devolver el rol para el cliente
                 }
             });
-} else {
-            res.status(400).json({ message: 'Código OTP o correo electrónico incorrecto, o ha expirado.' });
-}
+        } else {
+            // 5. Enviar respuesta de error si el usuario/OTP no es válido
+            return res.status(400).json({ message: 'Código OTP o correo electrónico incorrecto, o ha expirado.' });
+        }
     } catch (error) {
-        res.status(500).json({ message: 'Error en el servidor durante la verificación', error });
-}
+        console.error('Error en /api/auth/verify-otp-and-login:', error);
+        res.status(500).json({ message: 'Error en el servidor durante la verificación', error: error.message });
+    }
 });
 
 
