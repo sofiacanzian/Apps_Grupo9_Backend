@@ -3,13 +3,14 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
+const jwt = require('jsonwebtoken'); 
+// const { v4: uuidv4 } = require('uuid');
+// No se usa, se puede remover
 
 const app = express();
 const port = 3000;
-
-// CLAVE SECRETA PARA FIRMAR LOS TOKENS JWT
-// ¡IMPORTANTE! En producción, debe estar en una variable de entorno.
+// 🔑 CLAVE SECRETA PARA FIRMAR LOS TOKENS JWT
+// ¡IMPORTANTE! En producción, esto debe estar en una variable de entorno.
 const JWT_SECRET = process.env.JWT_SECRET || 'tu_clave_secreta_super_segura_aqui'; 
 
 app.use(express.json());
@@ -19,12 +20,13 @@ app.use(cors());
 mongoose.connect('mongodb://localhost:27017/ritmofit', {
     useNewUrlParser: true,
     useUnifiedTopology: true,
+    // useFindAndModify: false, // Descomentar si usas versiones anteriores a Mongoose 6
+    // useCreateIndex: true, // Descomentar si usas versiones anteriores a Mongoose 6
 })
 .then(() => console.log('Conectado a MongoDB'))
 .catch(err => console.error('Error al conectar a MongoDB', err));
-
 // =========================================================================
-// ESQUEMAS Y MODELOS
+// ESQUEMAS Y MODELOS (SE MANTIENEN IGUAL)
 // =========================================================================
 
 const userSchema = new mongoose.Schema({
@@ -35,14 +37,14 @@ const userSchema = new mongoose.Schema({
     isVerified: { type: Boolean, default: false },
     name: { type: String },
     lastName: { type: String },
-    // memberId: Se hace único con sparse: true para permitir nulos
+    // memberId: Se hará único con sparse: true para permitir nulos
     memberId: { 
-        type: String, unique: true, sparse: true 
-    },
+type: String, unique: true, sparse: true },
     birthDate: { type: Date },
     phoneNumber: { type: String },
     address: { type: String },
     photo: { type: String },
+    // 💡 AÑADIDO: Campo para roles (ej: 'user', 'admin')
     role: { type: String, enum: ['user', 'admin'], default: 'user' }
 }, { collection: 'users' });
 const User = mongoose.model('User', userSchema);
@@ -52,10 +54,12 @@ const gymClassSchema = new mongoose.Schema({
     description: { type: String },
     maxCapacity: { type: Number, required: true },
     currentCapacity: { type: Number, default: 0 },
+    // 💡 Añadir 'discipline' como alias de 'name' o como campo separado si es necesario
     discipline: { type: String }, 
-    classDate: { type: Date },
+    classDate: { type: Date }, // Se añade al modelo para la persistencia de clases únicas
     schedule: {
-        day: { type: String, required: true },
+  
+      day: { type: String, required: true },
         startTime: { type: String, required: true },
         endTime: { type: String, required: true }
     },
@@ -88,37 +92,38 @@ const Counter = mongoose.model('Counter', counterSchema);
 
 /**
  * Middleware para verificar el token JWT en la cabecera "Authorization".
- */
+*/
 const auth = (req, res, next) => {
     try {
         // Extrae el token, eliminando "Bearer "
         const token = req.header('Authorization')?.replace('Bearer ', '');
-        if (!token) {
+if (!token) {
             return res.status(401).json({ error: 'Authentication required. No token provided.' });
-        }
-        // Verifica el token
+}
+        // Verifica el token usando la clave secreta
         const decoded = jwt.verify(token, JWT_SECRET);
-        req.user = decoded; // Adjunta el payload (userId, email, role) al request
+req.user = decoded; // Adjunta el payload (userId, email, role) al request
         next();
-    } catch (e) {
+} catch (e) {
         // Token inválido o expirado
         res.status(401).json({ error: 'Invalid or expired token. Please re-authenticate.' });
-    }
+}
 };
 
 /**
  * Middleware para restringir el acceso solo a administradores.
- */
+ * Debe usarse DESPUÉS del middleware 'auth'.
+*/
 const adminAuth = (req, res, next) => {
+    // Asume que el payload de JWT incluye 'role'
     if (req.user && req.user.role === 'admin') {
         next();
-    } else {
+} else {
         res.status(403).json({ error: 'Authorization required. Not an administrator.' });
     }
 };
-
 // =========================================================================
-// HELPERS GENERALES
+// HELPERS GENERALES (SE MANTIENEN IGUAL)
 // =========================================================================
 
 // Configuración de Nodemailer
@@ -129,7 +134,6 @@ const transporter = nodemailer.createTransport({
         pass: 'gbdn gquc glch olbv' 
     }
 });
-
 function generateOTP() {
     return Math.floor(100000 + Math.random() * 900000).toString();
 }
@@ -140,53 +144,53 @@ async function getNextSequenceValue(sequenceName) {
         { $inc: { seq: 1 } },
         { new: true, upsert: true } 
     );
-    return counter.seq.toString().padStart(4, '0');
+return counter.seq.toString().padStart(4, '0');
 }
 
 /**
  * Función para calcular la próxima fecha de la clase (día de la semana).
- * Devuelve un objeto Date sin hora o null.
+* Devuelve un objeto Date sin hora o null.
  */
 function calculateNextClassDate(dayOfWeek, startTime) {
     const normalizedDay = dayOfWeek.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const daysMap = { 'domingo': 0, 'lunes': 1, 'martes': 2, 'miercoles': 3, 'jueves': 4, 'viernes': 5, 'sabado': 6 };
-    const targetDow = daysMap[normalizedDay] ?? null;
+const daysMap = { 'domingo': 0, 'lunes': 1, 'martes': 2, 'miercoles': 3, 'jueves': 4, 'viernes': 5, 'sabado': 6 };
+const targetDow = daysMap[normalizedDay] ?? null;
 
     if (targetDow === null) {
         console.warn(`Día de la semana no reconocido: ${dayOfWeek}`);
-        return null;
+return null;
     }
 
     const today = new Date();
+// 🔑 Clonar la fecha actual para manipularla
     let classDate = new Date(today); 
     
     const todayDow = today.getDay();
-    let delta = (targetDow - todayDow);
+let delta = (targetDow - todayDow);
     if (delta < 0) delta += 7;
-    
+// Mover la fecha al día de la semana objetivo
     classDate.setDate(classDate.getDate() + delta);
-    
-    // Si la clase es hoy, verificar la hora
+// Si la clase es hoy, verificar la hora
     if (delta === 0) {
         const [h, m] = (startTime || '00:00').split(':').map(Number);
-        const currentHour = today.getHours();
+const currentHour = today.getHours();
         const currentMinute = today.getMinutes();
 
         // Si la hora de la clase ya pasó hoy, programarla para la próxima semana
         if (h < currentHour || (h === currentHour && m <= currentMinute)) {
             classDate.setDate(classDate.getDate() + 7);
-        }
+}
     }
 
-    // Devolver la fecha sin la hora actual
-    classDate.setHours(0, 0, 0, 0); 
+    // 🔑 CRÍTICO: Devolver la fecha sin la hora actual, para que el front lo parsee.
+classDate.setHours(0, 0, 0, 0); 
     return classDate;
 }
 
 // Helper para parsear la hora y combinarla con una fecha base
 function parseTimeToDate(baseDate, timeStr) {
     const [h,m] = (timeStr || '00:00').split(':').map(Number);
-    const d = new Date(baseDate);
+const d = new Date(baseDate);
     d.setHours(h||0, m||0, 0, 0);
     return d;
 }
@@ -194,7 +198,8 @@ function parseTimeToDate(baseDate, timeStr) {
 // Helper para convertir el día de la semana a español y normalizar
 function getSpanishDay(dateString) {
     const d = new Date(dateString);
-    const days = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+const days = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+// 🔑 Usar la fecha del objeto Date para obtener el día correcto
     return days[d.getDay()].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
@@ -202,9 +207,8 @@ function getSpanishDay(dateString) {
 app.get('/', (req, res) => {
     res.send('API de RitmoFit en funcionamiento!');
 });
-
 // =========================================================================
-// RUTAS DE AUTENTICACIÓN
+// 🚀 RUTAS DE AUTENTICACIÓN (MANTIENEN SU LÓGICA)
 // =========================================================================
 
 // 1. Registro: /api/auth/register-send-otp
@@ -216,7 +220,8 @@ app.post('/api/auth/register-send-otp', async (req, res) => {
         let user = await User.findOne({ email });
         if (user && user.isVerified) {
             return res.status(400).json({ message: 'El usuario ya existe y está verificado.' });
-        }
+    
+    }
 
         const hashedPassword = await bcrypt.hash(password, 10);
         const otpCode = generateOTP();
@@ -225,43 +230,43 @@ app.post('/api/auth/register-send-otp', async (req, res) => {
             const newMemberId = await getNextSequenceValue('memberId'); 
             user = new User({ 
                 email, 
-                password: hashedPassword, 
+            
+    password: hashedPassword, 
                 otp: otpCode, 
                 otpExpires: new Date(Date.now() + 10 * 60000), 
                 isVerified: false,
                 memberId: newMemberId,
-                role: 'user'
+                role: 'user' //Asignar rol por defecto
             });
-        } else {
+} else {
             user.password = hashedPassword;
             user.otp = otpCode;
-            user.otpExpires = new Date(Date.now() + 10 * 60000); 
+user.otpExpires = new Date(Date.now() + 10 * 60000); 
             user.isVerified = false;
-        }
+}
 
         await user.save();
-
-        const mailOptions = {
+const mailOptions = {
             from: 'uadepruebas@gmail.com',
             to: email,
             subject: 'Código de Verificación de Registro para RitmoFit',
             text: `Tu código de verificación para completar tu registro es: ${otpCode}`
         };
-        transporter.sendMail(mailOptions, (error, info) => {
+transporter.sendMail(mailOptions, (error, info) => {
             if (error) {
                 console.error(error);
                 return res.status(500).json({ message: 'Error al enviar el correo de registro' });
             }
             res.status(200).json({ message: 'Código OTP enviado al correo electrónico para registro.' });
-        });
+      
+  });
     } catch (error) {
         if (error.code === 11000) { 
             return res.status(409).json({ message: 'El correo electrónico ya está registrado.' });
-        }
+}
         res.status(500).json({ message: 'Error en el servidor durante el registro', error });
     }
 });
-
 // 2. Login: /api/auth/login-send-otp
 app.post('/api/auth/login-send-otp', async (req, res) => {
     const email = req.body.email ? req.body.email.trim() : null;
@@ -273,6 +278,7 @@ app.post('/api/auth/login-send-otp', async (req, res) => {
             return res.status(401).json({ message: 'Credenciales inválidas o usuario no verificado.' });
         }
        
+ 
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
             return res.status(401).json({ message: 'Credenciales inválidas.' });
@@ -282,22 +288,24 @@ app.post('/api/auth/login-send-otp', async (req, res) => {
         user.otpExpires = new Date(Date.now() + 10 * 60000); 
         await user.save();
 
-        const mailOptions = {
+        
+const mailOptions = {
             from: 'uadepruebas@gmail.com',
             to: email,
             subject: 'Código de Verificación de Inicio de Sesión para RitmoFit',
             text: `Tu código de verificación para iniciar sesión es: ${user.otp}`
         };
-        transporter.sendMail(mailOptions, (error, info) => {
+transporter.sendMail(mailOptions, (error, info) => {
             if (error) {
                 console.error(error);
                 return res.status(500).json({ message: 'Error al enviar el correo de login' });
             }
             res.status(200).json({ message: 'Código OTP enviado al correo electrónico para inicio de sesión.' });
-        });
+    
+    });
     } catch (error) {
         res.status(500).json({ message: 'Error en el servidor durante el login', error });
-    }
+}
 });
 
 
@@ -311,41 +319,51 @@ app.post('/api/auth/verify-otp-and-login', async (req, res) => {
         if (user) {
             user.isVerified = true;
             user.otp = null;
-            user.otpExpires = null;
+  
+          user.otpExpires = null;
             await user.save();
             
-            // Añadir el rol al payload del JWT
+            // ✅ CRÍTICO: Añadir el rol al payload del JWT
             const token = jwt.sign(
                 { userId: user._id, email: user.email, role: user.role }, 
-                JWT_SECRET, 
+   
+             JWT_SECRET, 
                 { expiresIn: '1h' } 
             );
             
             const userObject = user.toObject();
 
-            // Devolver el token a nivel raíz
-            res.status(200).json({ 
-                message: 'Verificación exitosa. Sesión iniciada.', 
+            // ✅ CRÍTICO: Devolver el token a nivel raíz para Kotlin
+     
+       res.status(200).json({ 
+                message: 'Verificación exitosa.Sesión iniciada.', 
                 token: token, 
                 user: {
                     id: userObject._id,
-                    name: userObject.name || null, 
+                    name: userObject.name ||
+null, 
                     email: userObject.email,
-                    lastName: userObject.lastName || null,
-                    memberId: userObject.memberId || null,
-                    birthDate: userObject.birthDate || null,
-                    phoneNumber: userObject.phoneNumber || null,
-                    address: userObject.address || null,
-                    profilePhotoUrl: userObject.photo || null,
-                    role: userObject.role 
+                    lastName: userObject.lastName ||
+null,
+                    memberId: userObject.memberId ||
+null,
+                    birthDate: userObject.birthDate ||
+null,
+                    phoneNumber: userObject.phoneNumber ||
+null,
+                    address: userObject.address ||
+null,
+                    profilePhotoUrl: userObject.photo ||
+null,
+                    role: userObject.role // Devolver el rol para el cliente
                 }
             });
-        } else {
+} else {
             res.status(400).json({ message: 'Código OTP o correo electrónico incorrecto, o ha expirado.' });
-        }
+}
     } catch (error) {
         res.status(500).json({ message: 'Error en el servidor durante la verificación', error });
-    }
+}
 });
 
 
@@ -360,26 +378,28 @@ app.post('/api/auth/request-password-reset', async (req, res) => {
         }
         
         user.otp = generateOTP();
-        user.otpExpires = new Date(Date.now() + 10 * 60000); 
+ 
+       user.otpExpires = new Date(Date.now() + 10 * 60000); 
         await user.save();
 
         const mailOptions = {
             from: 'uadepruebas@gmail.com',
             to: email,
             subject: 'Código de Recuperación de Contraseña para RitmoFit',
-            text: `Tu código de verificación para restablecer tu contraseña es: ${user.otp}`
+            text: `Tu código de verificación para restablecer tu 
+contraseña es: ${user.otp}`
         };
 
         transporter.sendMail(mailOptions, (error, info) => {
             if (error) {
                 console.error(error);
                 return res.status(500).json({ message: 'Error al enviar el correo de recuperación' });
-            }
+}
             res.status(200).json({ message: 'Código OTP de recuperación enviado al correo electrónico.' });
-        });
+});
     } catch (error) {
         res.status(500).json({ message: 'Error en el servidor durante la solicitud de recuperación', error });
-    }
+}
 });
 
 
@@ -403,58 +423,64 @@ app.post('/api/auth/reset-password', async (req, res) => {
         
         res.status(200).json({ message: 'Contraseña restablecida exitosamente.' });
     } catch (error) {
-        res.status(500).json({ message: 'Error en el servidor al restablecer contraseña', error });
+  
+      res.status(500).json({ message: 'Error en el servidor al restablecer contraseña', error });
     }
 });
-
 // =========================================================================
-// RUTAS DE PERFIL (PROTEGIDAS)
+// 🔒 RUTAS DE PERFIL (PROTEGIDAS)
 // =========================================================================
 
 // Ruta para obtener el perfil del usuario por su ID
 app.get('/api/profile/:userId', auth, async (req, res) => {
     const { userId } = req.params;
-    
+    // 🔑 Opcional: Verificar que el token pertenezca al userId solicitado
     if (req.user.userId !== userId) {
         return res.status(403).json({ message: 'Acceso denegado: Token no corresponde al usuario solicitado.' });
     }
     
     try {
         const user = await User.findById(userId);
-        if (user) {
+  
+      if (user) {
             const userProfile = {
                 id: user._id,
                 email: user.email,
                 name: user.name || null,
                 lastName: user.lastName || null,
-                memberId: user.memberId || null,
+     
+           memberId: user.memberId || null,
                 birthDate: user.birthDate || null,
-                phoneNumber: user.phoneNumber || null,
-                address: user.address || null,
-                profilePhotoUrl: user.photo || null,
+                phoneNumber: user.phoneNumber ||
+null,
+                address: user.address ||
+null,
+                profilePhotoUrl: user.photo ||
+null,
                 isVerified: user.isVerified,
                 role: user.role
             };
-            res.status(200).json(userProfile);
+res.status(200).json(userProfile);
         } else {
             res.status(404).json({ message: 'Usuario no encontrado' });
-        }
+}
     } catch (error) {
         res.status(500).json({ message: 'Error al obtener el perfil', error });
-    }
+}
 });
 
 // Ruta para actualizar los datos del perfil del usuario por su ID
 app.put('/api/profile/:userId', auth, async (req, res) => {
     const { userId } = req.params;
     const { name, lastName, birthDate, phoneNumber, address, photo } = req.body;
-    
+    // 🔑 Opcional: Verificar que el token pertenezca al userId solicitado
     if (req.user.userId !== userId) {
         return res.status(403).json({ message: 'Acceso denegado: Token no corresponde al usuario solicitado.' });
     }
     
     try {
-        const user = await User.findById(userId);
+    
+    const user = await User.findById(userId);
         if (!user) {
             return res.status(404).json({ message: 'Usuario no encontrado.' });
         }
@@ -463,7 +489,8 @@ app.put('/api/profile/:userId', auth, async (req, res) => {
         user.lastName = lastName ?? user.lastName;
         user.birthDate = birthDate ?? user.birthDate;
         user.phoneNumber = phoneNumber ?? user.phoneNumber;
-        user.address = address ?? user.address;
+        
+user.address = address ?? user.address;
         user.photo = photo ?? user.photo;
 
         await user.save();
@@ -471,25 +498,32 @@ app.put('/api/profile/:userId', auth, async (req, res) => {
         const updatedProfile = {
             id: user._id,
             email: user.email,
-            name: user.name || null,
-            lastName: user.lastName || null,
-            memberId: user.memberId || null,
-            birthDate: user.birthDate || null,
-            phoneNumber: user.phoneNumber || null,
-            address: user.address || null,
-            profilePhotoUrl: user.photo || null,
+            name: user.name ||
+null,
+            lastName: user.lastName ||
+null,
+            memberId: user.memberId ||
+null,
+            birthDate: user.birthDate ||
+null,
+            phoneNumber: user.phoneNumber ||
+null,
+            address: user.address ||
+null,
+            profilePhotoUrl: user.photo ||
+null,
             isVerified: user.isVerified,
             role: user.role
         };
-        res.status(200).json(updatedProfile); 
+res.status(200).json(updatedProfile); 
     } catch (error) {
         res.status(500).json({ message: 'Error al actualizar el perfil.', error: error.message });
-    }
+}
 });
 
 
 // =========================================================================
-// RUTAS DE CLASES (PROTEGIDAS)
+// 🔒 RUTAS DE CLASES (PROTEGIDAS)
 // =========================================================================
 
 // Ruta para obtener el listado de clases con filtros
@@ -502,6 +536,7 @@ app.get('/api/classes', auth, async (req, res) => {
             filter['location.name'] = location;
         }
 
+        // Si se filtra por disciplina, usamos el campo 'name' del modelo GymClass
         if (discipline) {
             filter.name = { $regex: new RegExp(discipline, 'i') };
         }
@@ -510,37 +545,49 @@ app.get('/api/classes', auth, async (req, res) => {
 
         let targetDayOfWeek = null;
         if (date) {
+            // Obtener el día de la semana en español de la fecha 
+solicitada
             targetDayOfWeek = getSpanishDay(date); 
         }
         
         classes = classes.map(cls => {
             const calculatedDate = calculateNextClassDate(cls.schedule.day, cls.schedule.startTime);
-            return {
+return {
                 id: cls._id.toString(), 
+                
+                // 🔑 CRÍTICO 2: Aseguramos la existencia de campos esperados por Kotlin
                 name: cls.name,
-                description: cls.description || null,
+                description: cls.description ||
+null,
                 maxCapacity: cls.maxCapacity,
                 currentCapacity: cls.currentCapacity,
                 schedule: cls.schedule,
                 location: cls.location,
-                discipline: cls.discipline || cls.name,
-                professor: cls.professor || null,  
-                duration: cls.duration || null,    
-                classDate: calculatedDate ? calculatedDate.toISOString().split('T')[0] : null, 
+                discipline: cls.discipline ||
+cls.name, // Usar discipline si existe, sino name
+                professor: cls.professor ||
+null,  
+                duration: cls.duration ||
+null,    
+                
+                // Agregamos la fecha real de la próxima clase en formato YYYY-MM-DD
+                classDate: calculatedDate ?
+calculatedDate.toISOString().split('T')[0] : null, 
             };
-        }).filter(cls => {
+}).filter(cls => {
             // Aplicar el filtro por día de la semana si existe
             if (targetDayOfWeek) {
                 const classDay = cls.schedule.day.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
                 return classDay === targetDayOfWeek;
             }
-            return true;
+           
+ return true;
         });
 
         res.status(200).json(classes);
-    } catch (error) {
+} catch (error) {
         res.status(500).json({ message: 'Error al obtener las clases filtradas', error });
-    }
+}
 });
 
 // Ruta para obtener los detalles de una clase específica 
@@ -549,14 +596,17 @@ app.get('/api/classes/:classId', auth, async (req, res) => {
     try {
         const gymClass = await GymClass.findById(classId).lean();
         if (gymClass) {
+            // ✅ Asegurar que la respuesta tenga los campos esperados por Kotlin
             const calculatedDate = calculateNextClassDate(gymClass.schedule.day, gymClass.schedule.startTime);
-            const formattedClass = {
+        
+    const formattedClass = {
                 id: gymClass._id.toString(),
                 ...gymClass,
                 discipline: gymClass.discipline || gymClass.name,
                 professor: gymClass.professor || null,
                 duration: gymClass.duration || null,
-                classDate: calculatedDate ? calculatedDate.toISOString().split('T')[0] : null,
+   
+             classDate: calculatedDate ? calculatedDate.toISOString().split('T')[0] : null,
             };
             res.status(200).json(formattedClass);
         } else {
@@ -571,6 +621,7 @@ app.get('/api/classes/:classId', auth, async (req, res) => {
 app.get('/api/filters', auth, async (req, res) => {
     try {
         const locations = await GymClass.distinct('location.name');
+        // Usamos 'discipline' si lo tienes, sino 'name'
         const disciplines = await GymClass.distinct('discipline') || await GymClass.distinct('name');
         res.status(200).json({ locations, disciplines });
     } catch (error) {
@@ -579,7 +630,7 @@ app.get('/api/filters', auth, async (req, res) => {
 });
 
 
-// 🚨 RUTAS DE ADMINISTRACIÓN DE CLASES (Solo Admin) 🚨
+// 🚨 RUTAS DE ADMINISTRACIÓN DE CLASES (NUEVAS - PROTEGIDAS POR adminAuth) 🚨
 
 // Ruta para crear una nueva clase (Solo Admin)
 app.post('/api/classes', auth, adminAuth, async (req, res) => {
@@ -589,10 +640,10 @@ app.post('/api/classes', auth, adminAuth, async (req, res) => {
         res.status(201).json(newClass);
     } catch (error) {
         console.error('Error al crear la clase:', error);
-        res.status(500).json({ message: 'Error al crear la clase', error: error.message });
+        res.status(500).json({ message: 
+'Error al crear la clase', error: error.message });
     }
 });
-
 // Ruta para actualizar una clase existente (Solo Admin)
 app.put('/api/classes/:classId', auth, adminAuth, async (req, res) => {
     const { classId } = req.params;
@@ -603,13 +654,12 @@ app.put('/api/classes/:classId', auth, adminAuth, async (req, res) => {
             return res.status(404).json({ message: 'Clase no encontrada.' });
         }
         
-        res.status(200).json(updatedClass);
+res.status(200).json(updatedClass);
     } catch (error) {
         console.error('Error al actualizar la clase:', error);
         res.status(500).json({ message: 'Error al actualizar la clase', error: error.message });
     }
 });
-
 // Ruta para eliminar una clase (Solo Admin)
 app.delete('/api/classes/:classId', auth, adminAuth, async (req, res) => {
     const { classId } = req.params;
@@ -620,7 +670,7 @@ app.delete('/api/classes/:classId', auth, adminAuth, async (req, res) => {
             return res.status(404).json({ message: 'Clase no encontrada.' });
         }
 
-        // Cancelar todas las reservas asociadas a esta clase
+        // 💡 Opcional: Cancelar todas las reservas asociadas a esta clase
         await Reservation.updateMany({ classId: classId, status: 'active' }, { status: 'cancelled' });
 
         res.status(200).json({ message: 'Clase eliminada exitosamente y reservas canceladas.' });
@@ -629,15 +679,14 @@ app.delete('/api/classes/:classId', auth, adminAuth, async (req, res) => {
         res.status(500).json({ message: 'Error al eliminar la clase', error: error.message });
     }
 });
-
 // =========================================================================
-// RUTAS DE RESERVAS (PROTEGIDAS)
+// 🔒 RUTAS DE RESERVAS (PROTEGIDAS)
 // =========================================================================
 
 // Ruta para obtener las reservas ACTIVAS de un usuario (Mis Reservas)
 app.get('/api/reservations/:userId', auth, async (req, res) => {
     const { userId } = req.params;
-    
+    // 🔑 Verificar que el token pertenezca al userId solicitado
     if (req.user.userId !== userId) {
         return res.status(403).json({ message: 'Acceso denegado.' });
     }
@@ -650,6 +699,7 @@ app.get('/api/reservations/:userId', auth, async (req, res) => {
 
         // Lógica de expiración (solo para las activas)
         for (const r of reservations) {
+            // Asegúrate de que la clase y el horario existan
             if (r.status === 'active' && r.classId && r.classDate) {
                 // Si la hora de fin no existe, usamos la de inicio para el cálculo
                 const endDateTime = parseTimeToDate(r.classDate, r.classId.schedule.endTime || r.classId.schedule.startTime);
@@ -670,18 +720,54 @@ app.get('/api/reservations/:userId', auth, async (req, res) => {
         await Promise.all(promises);
 
         // Volver a obtener la lista solo con activas, excluyendo las que expiraron en este ciclo
-        reservations = await Reservation.find({ userId, status: 'active' }).populate('classId');
-        res.status(200).json(reservations);
+        // 🔑 CLAVE: Usar .lean() para mapear los campos a formato Kotlin.
+        const rawReservations = await Reservation.find({ userId, status: 'active' })
+            .populate('classId')
+            .lean();
+        const formattedReservations = rawReservations.map(r => {
+            const classData = r.classId;
+
+            // Mapeo del objeto GymClass anidado a formato Kotlin (id en lugar de _id)
+            const formattedClass = classData ? {
+                id: classData._id.toString(),
+                // ✅ CORRECCIÓN 1: Aseguramos que los campos de STRING obligatorios no sean null
+                name: classData.name || "",
+                // ✅ CORRECCIÓN 2: 'description' debe ser un string no nulo
+                description: classData.description || "",
+                maxCapacity: classData.maxCapacity,
+                currentCapacity: classData.currentCapacity,
+                schedule: classData.schedule,
+                location: classData.location,
+                // ✅ CORRECCIÓN 3: 'discipline' debe ser un string no nulo
+                discipline: classData.discipline || classData.name || "",
+                professor: classData.professor || null,
+                duration: classData.duration || null,
+                // ✅ CORRECCIÓN 4: 'classDate' debe ser un string (o null si el modelo Kotlin lo permite, 
+                // pero si da error de 'null' literal, usamos cadena vacía)
+                classDate: classData.classDate ? new Date(classData.classDate).toISOString().split('T')[0] : "",
+            } : null;
+
+            return {
+                id: r._id.toString(), // Mapea _id de la reserva a id
+                userId: r.userId.toString(),
+                classId: formattedClass, // Objeto GymClass completo mapeado (o null)
+                reservationDate: r.reservationDate.toISOString(),
+                classDate: r.classDate.toISOString(), // La fecha real de la clase (con hora)
+                status: r.status,
+            };
+        });
+
+        res.status(200).json(formattedReservations); // Responde con el formato corregido
     } catch (error) {
         res.status(500).json({ message: 'Error al obtener las reservas', error });
     }
 });
 
-
 // Ruta para crear una nueva reserva
 app.post('/api/reservations', auth, async (req, res) => {
     let { userId, classId, gymClassId } = req.body;
     
+    // 🔑 Verificar que el token pertenezca al userId solicitado
     if (req.user.userId !== userId) {
         return res.status(403).json({ message: 'Acceso denegado.' });
     }
@@ -689,7 +775,8 @@ app.post('/api/reservations', auth, async (req, res) => {
     try {
         classId = classId || gymClassId;
         if (!userId || !classId) {
-            return res.status(400).json({ message: 'userId y classId son requeridos.' });
+ 
+           return res.status(400).json({ message: 'userId y classId son requeridos.' });
         }
         const gymClass = await GymClass.findById(classId);
         if (!gymClass) {
@@ -697,57 +784,62 @@ app.post('/api/reservations', auth, async (req, res) => {
         }
 
         if (gymClass.currentCapacity >= gymClass.maxCapacity) {
-            return res.status(400).json({ message: 'No hay cupo disponible para esta clase.' });
+            return 
+res.status(400).json({ message: 'No hay cupo disponible para esta clase.' });
         }
 
         // CALCULAR FECHA REAL DE LA CLASE (Fecha y hora de inicio)
         const dateBase = calculateNextClassDate(gymClass.schedule.day, gymClass.schedule.startTime);
-        if (!dateBase) {
+if (!dateBase) {
              return res.status(400).json({ message: 'Día de la semana de la clase no válido.' });
-        }
+}
         
-        // Usamos el resultado de calculateNextClassDate (sin hora) y le agregamos la hora
+        // 🔑 CRÍTICO: Usamos el resultado de calculateNextClassDate (sin hora) y le agregamos la hora
         const startDateTime = parseTimeToDate(dateBase, gymClass.schedule.startTime);
-        const endDateTime = parseTimeToDate(dateBase, gymClass.schedule.endTime || gymClass.schedule.startTime);
+const endDateTime = parseTimeToDate(dateBase, gymClass.schedule.endTime || gymClass.schedule.startTime);
 
         // Validación: no permitir reservar en el pasado
         if (endDateTime < new Date()) {
             return res.status(400).json({ message: 'La clase ya ocurrió. No es posible reservar.' });
-        }
+}
 
         // Validación: evitar doble reserva del mismo turno (por fecha real y hora de inicio)
         const existingSame = await Reservation.findOne({ 
             userId, 
             classId, 
-            classDate: startDateTime,
+            classDate: startDateTime, // Se compara con el valor exacto guardado
             status: { $in: ['active'] } 
-        });
+ 
+       });
         if (existingSame) {
             return res.status(400).json({ message: 'Ya tienes una reserva activa para esta clase.' });
-        }
+}
 
-        // Validación: evitar solapamiento con otras reservas activas 
+        // Validación: evitar solapamiento con otras reservas activas (comparando start/end times del mismo día de la semana)
         const userActive = await Reservation.find({ userId, status: 'active' }).populate('classId');
-        const overlaps = userActive.some(r => {
+const overlaps = userActive.some(r => {
             const c = r.classId;
             if (!c) return false;
             
-            // Comparar el día de la semana
+            // 🔑 Comparar el día de la semana
             const classDay = c.schedule.day.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
             const newClassDay = gymClass.schedule.day.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
+  
+          // ⚠️ La validación de solapamiento por hora solo tiene sentido si es el mismo día
             if (classDay !== newClassDay) return false;
             
-            // Usamos la fecha real de la clase que estamos reservando (startDateTime) como base para comparar los horarios
-            const rStart = parseTimeToDate(startDateTime, c.schedule.startTime);
+            // 🔑 Usamos la fecha real de la clase que estamos reservando (startDateTime) como base para comparar los horarios
+            const rStart = parseTimeToDate(startDateTime, 
+c.schedule.startTime);
             const rEnd = parseTimeToDate(startDateTime, c.schedule.endTime || c.schedule.startTime);
             
             // Lógica de solapamiento: [A, B) y [C, D) se solapan si A < D y C < B
             return (startDateTime < rEnd && endDateTime > rStart);
-        });
+});
         if (overlaps) {
             return res.status(400).json({ message: 'Tienes otra reserva activa que se superpone en el mismo horario.' });
-        }
+}
 
         // Usamos la fecha y hora de inicio real de la clase en la nueva reserva
         const newReservation = new Reservation({ 
@@ -756,19 +848,18 @@ app.post('/api/reservations', auth, async (req, res) => {
             classDate: startDateTime, 
             reservationDate: new Date()
         });
-        await newReservation.save();
+await newReservation.save();
 
         // Actualizar cupo en GymClass 
         gymClass.currentCapacity = (gymClass.currentCapacity || 0) + 1;
-        await gymClass.save();
+await gymClass.save();
 
         res.status(201).json(newReservation);
     } catch (error) {
         console.error('Error al crear la reserva:', error);
-        res.status(500).json({ message: 'Error al crear la reserva', error: error.message });
+res.status(500).json({ message: 'Error al crear la reserva', error: error.message });
     }
 });
-
 // Ruta para cancelar una reserva 
 app.post('/api/reservations/cancel/:reservationId', auth, async (req, res) => {
     const { reservationId } = req.params;
@@ -778,7 +869,7 @@ app.post('/api/reservations/cancel/:reservationId', auth, async (req, res) => {
             return res.status(404).json({ message: 'Reserva no encontrada.' });
         }
         
-        // Verificar que el token pertenezca al usuario de la reserva
+        // 🔑 Verificar que el token pertenezca al usuario de la reserva
         if (req.user.userId !== reservation.userId.toString()) {
             return res.status(403).json({ message: 'Acceso denegado: No tienes permiso para cancelar esta reserva.' });
         }
@@ -787,33 +878,37 @@ app.post('/api/reservations/cancel/:reservationId', auth, async (req, res) => {
             return res.status(400).json({ message: 'Solo se pueden cancelar reservas activas.' });
         }
         
-        // Validar que la cancelación sea antes de que termine la clase
+      
+  // 🔑 CRÍTICO: Validar que la cancelación sea antes de que termine la clase
         const gymClass = await GymClass.findById(reservation.classId);
         if (gymClass && reservation.classDate) {
-             const endDateTime = parseTimeToDate(reservation.classDate, gymClass.schedule.endTime || gymClass.schedule.startTime);
+             const endDateTime = parseTimeToDate(reservation.classDate, gymClass.schedule.endTime ||
+gymClass.schedule.startTime);
              if (endDateTime < new Date()) {
+                 // Esta situación debería ser manejada por la lógica de expiración en GET /api/reservations/:userId
+                 // Pero como fallback, evitamos cancelaciones de clases ya terminadas
                  return res.status(400).json({ message: 'No se puede cancelar una clase que ya ha finalizado.' });
-             }
+}
         }
 
 
         reservation.status = 'cancelled';
-        await reservation.save();
+await reservation.save();
 
         // Liberar cupo
         if (gymClass && (gymClass.currentCapacity||0) > 0) {
             gymClass.currentCapacity -= 1;
-            await gymClass.save();
+await gymClass.save();
         }
 
         res.status(200).json({ message: 'Reserva cancelada exitosamente' });
-    } catch (error) {
+} catch (error) {
         res.status(500).json({ message: 'Error al cancelar la reserva', error });
-    }
+}
 });
 
 // =========================================================================
-// RUTAS DE HISTORIAL (PROTEGIDAS)
+// 🔒 RUTAS DE HISTORIAL (PROTEGIDAS)
 // =========================================================================
 
 // Ruta para obtener el historial de asistencias de un usuario
@@ -821,13 +916,15 @@ app.get('/api/history/:userId', auth, async (req, res) => {
     const { userId } = req.params;
     const { startDate, endDate } = req.query; 
 
+    // 🔑 Verificar que el token pertenezca al userId solicitado
     if (req.user.userId !== userId) {
         return res.status(403).json({ message: 'Acceso denegado.' });
     }
 
     try {
         let findCriteria = { 
-            userId, 
+ 
+           userId, 
             status: { $in: ['attended', 'cancelled', 'expired'] } 
         };
 
@@ -836,27 +933,48 @@ app.get('/api/history/:userId', auth, async (req, res) => {
             findCriteria.classDate = {};
 
             if (startDate) {
-                // Inicio del día
+   
+             // Inicio del día
                 findCriteria.classDate.$gte = new Date(new Date(startDate).setHours(0, 0, 0, 0));
-            }
+}
 
             if (endDate) {
                 // Fin del día
                 findCriteria.classDate.$lte = new Date(new Date(endDate).setHours(23, 59, 59, 999));
-            }
+}
         }
 
         const history = await Reservation.find(findCriteria)
             .populate('classId')
             .sort({ classDate: -1 });
+            
+        // 🔑 Mapear la respuesta para el historial (similar a Mis Reservas)
+        const formattedHistory = history.map(r => {
+            const classData = r.classId;
+            // Solo devolvemos la clase si existe (puede ser null si la clase fue borrada)
+            const formattedClass = classData ? {
+                id: classData._id.toString(),
+                name: classData.name,
+                discipline: classData.discipline || classData.name,
+                // ...otros campos mínimos necesarios para el historial
+            } : null;
 
-        res.status(200).json(history);
+            return {
+                id: r._id.toString(), // Mapea _id de la reserva a id
+                userId: r.userId.toString(),
+                classId: formattedClass, // Objeto GymClass mapeado (o null)
+                reservationDate: r.reservationDate.toISOString(),
+                classDate: r.classDate.toISOString(), // La fecha real de la clase (con hora)
+                status: r.status,
+            };
+        });
+
+res.status(200).json(formattedHistory); // Responde con el formato corregido
     } catch (error) {
         console.error('Error al obtener el historial:', error);
-        res.status(500).json({ message: 'Error al obtener el historial de asistencias', error });
+res.status(500).json({ message: 'Error al obtener el historial de asistencias', error });
     }
 });
-
 // Iniciar el servidor
 app.listen(port, () => {
     console.log(`Servidor escuchando en http://localhost:${port}`);
