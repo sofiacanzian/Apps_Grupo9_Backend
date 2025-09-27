@@ -265,103 +265,66 @@ transporter.sendMail(mailOptions, (error, info) => {
         res.status(500).json({ message: 'Error en el servidor durante el registro', error });
     }
 });
-// 2. Login: /api/auth/login-send-otp
-app.post('/api/auth/login-send-otp', async (req, res) => {
+// 2. Login Directo: /api/auth/login
+app.post('/api/auth/login', async (req, res) => {
     const email = req.body.email ? req.body.email.trim() : null;
     const password = req.body.password ? req.body.password.trim() : null;
 
     try {
+        // 1. Buscar usuario
         const user = await User.findOne({ email });
-        if (!user || !user.password || !user.isVerified) { 
-            return res.status(401).json({ message: 'Credenciales inválidas o usuario no verificado.' });
+
+        if (!user) {
+            return res.status(401).json({ message: 'Credenciales incorrectas.' });
         }
-       
- 
+
+        // 2. Comparar contraseña (usando bcrypt)
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
-            return res.status(401).json({ message: 'Credenciales inválidas.' });
+            return res.status(401).json({ message: 'Credenciales incorrectas.' });
         }
-        
-        user.otp = generateOTP();
-        user.otpExpires = new Date(Date.now() + 10 * 60000); 
-        await user.save();
 
+        // 3. Opcional: Verificar si el usuario está verificado (solo si usas el OTP para el registro)
+        // if (!user.isVerified) {
+        //     return res.status(401).json({ message: 'Cuenta no verificada. Por favor, verifica tu email.' });
+        // }
+
+        // 4. Generar Token JWT
+        const token = jwt.sign(
+            { userId: user._id, email: user.email, role: user.role }, 
+            JWT_SECRET, 
+            { expiresIn: '1h' } // Ajusta el tiempo de expiración según tu política
+        );
+
+        // 5. Preparar objeto de usuario (evitar devolver el hash de la contraseña)
+        const userObject = user.toObject();
+        // Eliminar el hash de la contraseña, OTP y datos sensibles
+        delete userObject.password; 
+        delete userObject.otp;
+        delete userObject.otpExpires;
         
-const mailOptions = {
-            from: 'uadepruebas@gmail.com',
-            to: email,
-            subject: 'Código de Verificación de Inicio de Sesión para RitmoFit',
-            text: `Tu código de verificación para iniciar sesión es: ${user.otp}`
-        };
-transporter.sendMail(mailOptions, (error, info) => {
-            if (error) {
-                console.error(error);
-                return res.status(500).json({ message: 'Error al enviar el correo de login' });
+        // 6. Enviar respuesta de éxito
+        res.status(200).json({ 
+            message: 'Sesión iniciada exitosamente.', 
+            token: token, 
+            user: {
+                id: userObject._id,
+                name: userObject.name || null, 
+                email: userObject.email,
+                lastName: userObject.lastName || null,
+                memberId: userObject.memberId || null,
+                birthDate: userObject.birthDate || null,
+                phoneNumber: userObject.phoneNumber || null,
+                address: userObject.address || null,
+                profilePhotoUrl: userObject.photo || null,
+                role: userObject.role 
             }
-            res.status(200).json({ message: 'Código OTP enviado al correo electrónico para inicio de sesión.' });
-    
-    });
+        });
+
     } catch (error) {
-        res.status(500).json({ message: 'Error en el servidor durante el login', error });
-}
-});
-
-
-// 3. Confirmar OTP y Login: /api/auth/verify-otp-and-login
-app.post('/api/auth/verify-otp-and-login', async (req, res) => {
-    const email = req.body.email ? req.body.email.trim() : null;
-    const otp = req.body.otp ? req.body.otp.trim() : null;
-
-    try {
-        const user = await User.findOne({ email, otp, otpExpires: { $gt: new Date() } });
-        if (user) {
-            user.isVerified = true;
-            user.otp = null;
-  
-          user.otpExpires = null;
-            await user.save();
-            
-            // ✅ CRÍTICO: Añadir el rol al payload del JWT
-            const token = jwt.sign(
-                { userId: user._id, email: user.email, role: user.role }, 
-   
-             JWT_SECRET, 
-                { expiresIn: '1h' } 
-            );
-            
-            const userObject = user.toObject();
-
-            // ✅ CRÍTICO: Devolver el token a nivel raíz para Kotlin
-     
-       res.status(200).json({ 
-                message: 'Verificación exitosa.Sesión iniciada.', 
-                token: token, 
-                user: {
-                    id: userObject._id,
-                    name: userObject.name ||
-null, 
-                    email: userObject.email,
-                    lastName: userObject.lastName ||
-null,
-                    memberId: userObject.memberId ||
-null,
-                    birthDate: userObject.birthDate ||
-null,
-                    phoneNumber: userObject.phoneNumber ||
-null,
-                    address: userObject.address ||
-null,
-                    profilePhotoUrl: userObject.photo ||
-null,
-                    role: userObject.role // Devolver el rol para el cliente
-                }
-            });
-} else {
-            res.status(400).json({ message: 'Código OTP o correo electrónico incorrecto, o ha expirado.' });
-}
-    } catch (error) {
-        res.status(500).json({ message: 'Error en el servidor durante la verificación', error });
-}
+        console.error('Error en el servidor durante el login:', error);
+        res.status(500).json({ message: 'Error en el servidor al iniciar sesión', error });
+    }
 });
 
 
@@ -400,29 +363,60 @@ contraseña es: ${user.otp}`
 }
 });
 
+// NUEVA RUTA: Solo verifica si el OTP de recuperación es válido
+app.post('/api/auth/verify-reset-otp', async (req, res) => {
+    const { email, otp } = req.body;
+    
+    // Busca y verifica el OTP como lo hicimos en la solución anterior
+    const user = await User.findOne({ email });
+
+    if (!user || user.otp !== otp || user.otpExpires < Date.now()) {
+        return res.status(400).json({ message: 'Código OTP incorrecto o ha expirado.' });
+    }
+
+    // Si es válido, avisa al cliente que puede proceder
+    res.status(200).json({ message: 'Verificación de OTP exitosa. Procede a cambiar la contraseña.' });
+});
 
 // 5. Restablecer Contraseña: /api/auth/reset-password
 app.post('/api/auth/reset-password', async (req, res) => {
+    // 🔑 Mantenemos la extracción de datos
     const email = req.body.email ? req.body.email.trim() : null;
     const otp = req.body.otp ? req.body.otp.trim() : null;
     const newPassword = req.body.newPassword ? req.body.newPassword.trim() : null;
 
     try {
-        const user = await User.findOne({ email, otp, otpExpires: { $gt: new Date() } });
+        // 1. Buscamos el usuario SOLO por email (asumiendo que es único)
+        const user = await User.findOne({ email });
+
+        // Verificación 1: Usuario encontrado
         if (!user) {
+            // Usamos el mensaje genérico de error que tenías para evitar dar pistas.
+            return res.status(400).json({ message: 'Código OTP, correo electrónico incorrecto, o ha expirado.' });
+        }
+
+        // Verificación 2: El OTP es incorrecto O ha expirado
+        if (user.otp !== otp || user.otpExpires < Date.now()) {
             return res.status(400).json({ message: 'Código OTP, correo electrónico incorrecto, o ha expirado.' });
         }
         
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        // Si llegamos aquí, el OTP es correcto y no ha expirado.
+        
+        // 2. Hash de la nueva contraseña
+        // Es mejor generar el salt en lugar de usar un número fijo (como 10)
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+        
+        // 3. Aplicar cambios y guardar
         user.password = hashedPassword;
-        user.otp = null;
-        user.otpExpires = null;
+        user.otp = null; // Limpiar OTP para que no se pueda reutilizar
+        user.otpExpires = null; // Limpiar la fecha de expiración
         await user.save();
         
         res.status(200).json({ message: 'Contraseña restablecida exitosamente.' });
     } catch (error) {
-  
-      res.status(500).json({ message: 'Error en el servidor al restablecer contraseña', error });
+        console.error('Error en el servidor al restablecer contraseña:', error);
+        res.status(500).json({ message: 'Error en el servidor al restablecer contraseña', error });
     }
 });
 // =========================================================================
