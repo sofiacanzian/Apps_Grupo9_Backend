@@ -147,45 +147,28 @@ async function getNextSequenceValue(sequenceName) {
 return counter.seq.toString().padStart(4, '0');
 }
 
-/**
- * Función para calcular la próxima fecha de la clase (día de la semana).
-* Devuelve un objeto Date sin hora o null.
- */
-function calculateNextClassDate(dayOfWeek, startTime) {
-    const normalizedDay = dayOfWeek.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-const daysMap = { 'domingo': 0, 'lunes': 1, 'martes': 2, 'miercoles': 3, 'jueves': 4, 'viernes': 5, 'sabado': 6 };
-const targetDow = daysMap[normalizedDay] ?? null;
+function calculateNextClassDate(dayOfWeek, startTime, baseDate) {
+  const normalizedDay = dayOfWeek.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const daysMap = { 'domingo':0,'lunes':1,'martes':2,'miercoles':3,'jueves':4,'viernes':5,'sabado':6 };
+  const targetDow = daysMap[normalizedDay] ?? null;
+  if (targetDow === null) { console.warn(`Día no reconocido: ${dayOfWeek}`); return null; }
 
-    if (targetDow === null) {
-        console.warn(`Día de la semana no reconocido: ${dayOfWeek}`);
-return null;
+  const today = baseDate ? new Date(baseDate) : new Date();
+  let classDate = new Date(today);
+  const todayDow = today.getDay();
+  let delta = (targetDow - todayDow);
+  if (delta < 0) delta += 7;
+  classDate.setDate(classDate.getDate() + delta);
+  if (delta === 0) {
+    const [h,m] = (startTime || '00:00').split(':').map(Number);
+    if (h < today.getHours() || (h === today.getHours() && m <= today.getMinutes())) {
+      classDate.setDate(classDate.getDate() + 7);
     }
-
-    const today = new Date();
-// 🔑 Clonar la fecha actual para manipularla
-    let classDate = new Date(today); 
-    
-    const todayDow = today.getDay();
-let delta = (targetDow - todayDow);
-    if (delta < 0) delta += 7;
-// Mover la fecha al día de la semana objetivo
-    classDate.setDate(classDate.getDate() + delta);
-// Si la clase es hoy, verificar la hora
-    if (delta === 0) {
-        const [h, m] = (startTime || '00:00').split(':').map(Number);
-const currentHour = today.getHours();
-        const currentMinute = today.getMinutes();
-
-        // Si la hora de la clase ya pasó hoy, programarla para la próxima semana
-        if (h < currentHour || (h === currentHour && m <= currentMinute)) {
-            classDate.setDate(classDate.getDate() + 7);
+  }
+  classDate.setHours(0,0,0,0);
+  return classDate;
 }
-    }
 
-    // 🔑 CRÍTICO: Devolver la fecha sin la hora actual, para que el front lo parsee.
-classDate.setHours(0, 0, 0, 0); 
-    return classDate;
-}
 
 // Helper para parsear la hora y combinarla con una fecha base
 function parseTimeToDate(baseDate, timeStr) {
@@ -196,12 +179,27 @@ const d = new Date(baseDate);
 }
 
 // Helper para convertir el día de la semana a español y normalizar
-function getSpanishDay(dateString) {
-    const d = new Date(dateString);
-const days = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
-// 🔑 Usar la fecha del objeto Date para obtener el día correcto
-    return days[d.getDay()].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+function parseClientDate(s) {
+  if (!s) return null;
+  let y, m, d;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) { // YYYY-MM-DD
+    [y, m, d] = s.split('-').map(Number);
+  } else {
+    const mm = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s); // DD/MM/YYYY
+    if (!mm) return null;
+    d = +mm[1]; m = +mm[2]; y = +mm[3];
+  }
+  // Crear fecha en MEDIODÍA LOCAL para evitar saltos UTC/DST
+  return new Date(y, m - 1, d, 12, 0, 0, 0);
 }
+
+function getSpanishDay(dateString) {
+  const d = parseClientDate(dateString);
+  if (!d) return null;
+  const days = ['domingo','lunes','martes','miercoles','jueves','viernes','sabado'];
+  return days[d.getDay()];
+}
+
 
 // Rutas base
 app.get('/', (req, res) => {
@@ -544,14 +542,17 @@ app.get('/api/classes', auth, async (req, res) => {
         let classes = await GymClass.find(filter).lean();
 
         let targetDayOfWeek = null;
+        let baseDate = null;
         if (date) {
-            // Obtener el día de la semana en español de la fecha 
-solicitada
-            targetDayOfWeek = getSpanishDay(date); 
+          baseDate = parseClientDate(date);
+          targetDayOfWeek = getSpanishDay(date);
+          if (!baseDate || !targetDayOfWeek) {
+            return res.status(400).json({ code:'INVALID_DATE', hint:'Use YYYY-MM-DD o DD/MM/YYYY' });
+          }
         }
-        
+
         classes = classes.map(cls => {
-            const calculatedDate = calculateNextClassDate(cls.schedule.day, cls.schedule.startTime);
+            const calculatedDate = calculateNextClassDate(cls.schedule.day, cls.schedule.startTime, baseDate);
 return {
                 id: cls._id.toString(), 
                 
@@ -854,7 +855,35 @@ await newReservation.save();
         gymClass.currentCapacity = (gymClass.currentCapacity || 0) + 1;
 await gymClass.save();
 
-        res.status(201).json(newReservation);
+        // reemplaza la línea: res.status(201).json(newReservation);
+         const populated = await Reservation.findById(newReservation._id).populate('classId').lean();
+
+         const c = populated.classId;
+         const classDto = c ? {
+           id: c._id.toString(),
+           name: c.name || "",
+           description: c.description || "",
+           maxCapacity: c.maxCapacity,
+           currentCapacity: c.currentCapacity,     // ya actualizado
+           schedule: c.schedule,
+           location: c.location,
+           discipline: c.discipline || c.name || "",
+           professor: c.professor || null,
+           duration: c.duration || null,
+           classDate: c.classDate ? new Date(c.classDate).toISOString().split('T')[0] : ""
+         } : null;
+
+         const resDto = {
+           id: populated._id.toString(),
+           userId: populated.userId.toString(),
+           classId: classDto,                       // <- objeto, no string
+           reservationDate: populated.reservationDate.toISOString(),
+           classDate: populated.classDate.toISOString(),
+           status: populated.status
+         };
+
+         return res.status(201).json(resDto);
+
     } catch (error) {
         console.error('Error al crear la reserva:', error);
 res.status(500).json({ message: 'Error al crear la reserva', error: error.message });
